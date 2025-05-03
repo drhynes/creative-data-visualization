@@ -1,0 +1,307 @@
+---
+title: "creative-data-visualization"
+author: "Drew Hynes"
+format: html
+editor: visual
+---
+
+## Data Wrangling
+
+```{r}
+library(readr)
+library(dplyr)
+library(skimr)
+
+#read in dataframes
+m <- "UT27_Meninges_Output_Data.csv"
+meninges <- read_csv(m, col_names = TRUE)
+b <- "UT27_Brain_Output_Data.csv"
+brain <- read_csv(b,col_names = TRUE)
+
+#keep only needed columns
+brain_select <- brain %>%
+  select(Date, `Mouse #`,`Cage #`, ZT, Sex, Group, `Microglia Counts`, `Neutrophil Counts`, `T-Cell Counts`, `CD8+ T Cell Counts`, `CD4+ T Cell Counts`, `B Cell Counts`)
+meninges_select <- meninges %>%
+  select(Date, `Mouse #`,`Cage #`, ZT, Sex, Group, `Neutrophil Cells`, `T Cell Cells`, `CD8 Cells`, `CD4 Cells`, `B Cell Cells`)
+
+#Make column names consistent
+meninges_select <- meninges_select %>%
+  rename(
+    `Meninges Neutrophil Counts` = `Neutrophil Cells`,
+    `Meninges T-Cell Counts` = `T Cell Cells`,
+    `Meninges CD8+ T Cell Counts` = `CD8 Cells`,
+    `Meninges CD4+ T Cell Counts` = `CD4 Cells`,
+    `Meninges B Cell Counts` = `B Cell Cells`
+  )
+brain_select <- brain_select %>%
+  rename(
+    `Brain Microglia Counts` = `Microglia Counts`,
+    `Brain Neutrophil Counts` = `Neutrophil Counts`,
+    `Brain T-Cell Counts` = `T-Cell Counts`,
+    `Brain CD8+ T Cell Counts` = `CD8+ T Cell Counts`,
+    `Brain CD4+ T Cell Counts` = `CD4+ T Cell Counts`,
+    `Brain B Cell Counts` = `B Cell Counts`
+  )
+
+#combine cage and mouse ID into 1 column
+brain_select$`Mouse #` <- paste(brain_select$`Cage #`, brain_select$`Mouse #`, sep = "-")
+meninges_select$`Mouse #` <- paste(meninges_select$`Cage #`, meninges_select$`Mouse #`, sep = "-")
+
+#join the 2 datasets
+combined_data <- brain_select %>%
+  full_join(meninges_select) 
+
+#Narrow the data to just groups of interest
+combined_data <- na.omit(combined_data)
+combined_data <- combined_data %>%
+  filter(!(Group %in% c("2-WT-9", "5-3xTg-18")))
+
+#PT2
+
+library(scales)
+
+#Combine subjects of same group to make one group average amount of each immune cell type
+averaged_data <- combined_data %>%
+  group_by(Group, ZT) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")
+
+#Going to change the counts to a scaled number 0.1-1.0 that represents the data
+min_size <- 0.1   # smallest size for visualization
+max_size <- 1.0  # largest size for visualization
+
+# List of columns to rescale
+cell_count_columns <- c(
+  "Meninges Neutrophil Counts",
+  "Meninges T-Cell Counts",
+  "Meninges CD8+ T Cell Counts",
+  "Meninges CD4+ T Cell Counts",
+  "Meninges B Cell Counts",
+  "Brain Microglia Counts",
+  "Brain Neutrophil Counts",
+  "Brain T-Cell Counts",
+  "Brain CD4+ T Cell Counts",
+  "Brain B Cell Counts",
+  "Brain CD8+ T Cell Counts"
+)
+
+# Rescale specified columns
+averaged_data <- averaged_data %>%
+  mutate(across(all_of(cell_count_columns), ~ rescale(., to = c(min_size, max_size))))
+
+#PT3
+
+library(dplyr)
+library(tidyr)
+
+# Add cell type → icon mapping
+icon_paths <- tibble(
+  cell_type = c(
+    "Meninges Neutrophil Counts",
+    "Meninges T-Cell Counts",
+    "Meninges CD8+ T Cell Counts",
+    "Meninges CD4+ T Cell Counts",
+    "Meninges B Cell Counts",
+    "Brain Microglia Counts",
+    "Brain Neutrophil Counts",
+    "Brain T-Cell Counts",
+    "Brain CD4+ T Cell Counts",
+    "Brain B Cell Counts",
+    "Brain CD8+ T Cell Counts"
+  ),
+  icon_path = c(
+    "neutrophil.png",
+    "tcell.png",
+    "cd8tcell.png",
+    "cd4tcell.png",
+    "bcell.png",
+    "microglia.png",
+    "neutrophil.png",
+    "tcell.png",
+    "cd4tcell.png",
+    "bcell.png",
+    "cd8tcell.png"
+  )
+)
+
+# Pivot the averaged data to long format to map icons
+long_averaged <- averaged_data %>%
+  pivot_longer(cols = all_of(cell_count_columns),
+               names_to = "cell_type",
+               values_to = "scaled_size") %>%
+  left_join(icon_paths, by = "cell_type")
+
+
+library(dplyr)
+library(stringr)
+
+#create column for tissue type so that they can be split later
+long_averaged <- long_averaged %>%
+  mutate(tissue_type = case_when(
+    str_detect(cell_type, "Brain") ~ "Brain",
+    str_detect(cell_type, "Meninges") ~ "Meninges",
+    TRUE ~ "Other"
+  ))
+
+long_averaged <- long_averaged %>%
+  mutate(scaled_size = round(scaled_size, 1))  # Round to 1 decimal place (tenths) to help with visualization
+
+# Split the dataframe into two based on tissue_type
+brain_averaged <- long_averaged %>% 
+  filter(tissue_type == "Brain")
+meninges_averaged <- long_averaged %>% 
+  filter(tissue_type == "Meninges")
+
+#split each of these into dataframes for each group
+# For brain_averaged
+brain_WT6      <- brain_averaged %>% filter(Group == "1-WT-6")
+brain_3xTg9    <- brain_averaged %>% filter(Group == "3-3xTg-9")
+brain_WT18     <- brain_averaged %>% filter(Group == "4-WT-18")
+
+# For meninges_averaged
+meninges_WT6   <- meninges_averaged %>% filter(Group == "1-WT-6")
+meninges_3xTg9 <- meninges_averaged %>% filter(Group == "3-3xTg-9")
+meninges_WT18  <- meninges_averaged %>% filter(Group == "4-WT-18")
+
+
+```
+
+Split into dataframe based on cell type
+
+```{r}
+# Define the target icons
+icons <- c("microglia.png", "tcell.png", "cd8tcell.png", "cd4tcell.png", "bcell.png", "neutrophil.png")
+
+# ---- For brain dataframes ----
+brain_WT6_microglia     <- brain_WT6      %>% filter(icon_path == "microglia.png")
+brain_WT6_tcell         <- brain_WT6      %>% filter(icon_path == "tcell.png")
+brain_WT6_cd8tcell      <- brain_WT6      %>% filter(icon_path == "cd8tcell.png")
+brain_WT6_cd4tcell      <- brain_WT6      %>% filter(icon_path == "cd4tcell.png")
+brain_WT6_bcell         <- brain_WT6      %>% filter(icon_path == "bcell.png")
+brain_WT6_neutrophil    <- brain_WT6      %>% filter(icon_path == "neutrophil.png")
+
+brain_3xTg9_microglia   <- brain_3xTg9    %>% filter(icon_path == "microglia.png")
+brain_3xTg9_tcell       <- brain_3xTg9    %>% filter(icon_path == "tcell.png")
+brain_3xTg9_cd8tcell    <- brain_3xTg9    %>% filter(icon_path == "cd8tcell.png")
+brain_3xTg9_cd4tcell    <- brain_3xTg9    %>% filter(icon_path == "cd4tcell.png")
+brain_3xTg9_bcell       <- brain_3xTg9    %>% filter(icon_path == "bcell.png")
+brain_3xTg9_neutrophil  <- brain_3xTg9    %>% filter(icon_path == "neutrophil.png")
+
+brain_WT18_microglia    <- brain_WT18     %>% filter(icon_path == "microglia.png")
+brain_WT18_tcell        <- brain_WT18     %>% filter(icon_path == "tcell.png")
+brain_WT18_cd8tcell     <- brain_WT18     %>% filter(icon_path == "cd8tcell.png")
+brain_WT18_cd4tcell     <- brain_WT18     %>% filter(icon_path == "cd4tcell.png")
+brain_WT18_bcell        <- brain_WT18     %>% filter(icon_path == "bcell.png")
+brain_WT18_neutrophil   <- brain_WT18     %>% filter(icon_path == "neutrophil.png")
+
+# ---- For meninges dataframes  ----
+meninges_WT6_tcell         <- meninges_WT6     %>% filter(icon_path == "tcell.png")
+meninges_WT6_cd8tcell      <- meninges_WT6     %>% filter(icon_path == "cd8tcell.png")
+meninges_WT6_cd4tcell      <- meninges_WT6     %>% filter(icon_path == "cd4tcell.png")
+meninges_WT6_bcell         <- meninges_WT6     %>% filter(icon_path == "bcell.png")
+meninges_WT6_neutrophil    <- meninges_WT6     %>% filter(icon_path == "neutrophil.png")
+
+meninges_3xTg9_tcell       <- meninges_3xTg9   %>% filter(icon_path == "tcell.png")
+meninges_3xTg9_cd8tcell    <- meninges_3xTg9   %>% filter(icon_path == "cd8tcell.png")
+meninges_3xTg9_cd4tcell    <- meninges_3xTg9   %>% filter(icon_path == "cd4tcell.png")
+meninges_3xTg9_bcell       <- meninges_3xTg9   %>% filter(icon_path == "bcell.png")
+meninges_3xTg9_neutrophil  <- meninges_3xTg9   %>% filter(icon_path == "neutrophil.png")
+
+meninges_WT18_tcell        <- meninges_WT18    %>% filter(icon_path == "tcell.png")
+meninges_WT18_cd8tcell     <- meninges_WT18    %>% filter(icon_path == "cd8tcell.png")
+meninges_WT18_cd4tcell     <- meninges_WT18    %>% filter(icon_path == "cd4tcell.png")
+meninges_WT18_bcell        <- meninges_WT18    %>% filter(icon_path == "bcell.png")
+meninges_WT18_neutrophil   <- meninges_WT18    %>% filter(icon_path == "neutrophil.png")
+
+```
+
+Function to plot prevalence of Immune cell represented by size, chronologically left to right. Can do this for each of the above dataframes by inputting its name and the icon name
+
+```{r}
+library(ggplot2)
+library(ggimage)
+library(magick)
+
+# Function to plot icons with scaling and spacing
+plot_icons <- function(dataframe, icon_image) {
+  
+  # Create the df_icons data frame based on the dataframe input
+  df_icons <- data.frame(
+    x = c(1, 2, 3, 4),   
+    y = c(1, 1, 1, 1),  
+    image = rep(icon_image, nrow(dataframe)),  # Use icon_image input
+    scaled_size = dataframe$scaled_size  # Reference the 'scaled_size' column from the input dataframe
+  )
+  
+  # Plot icons left to right chronologically with scaled size
+  p <- ggplot(df_icons, aes(x = x, y = y)) +
+    geom_image(aes(image = image, size = scaled_size), by = "height") +  # Use actual sizes from scaled_size column
+    scale_size_identity() +  # Use actual sizes from scaled_size column
+    theme_void() +  # Remove grid 
+    theme(
+      axis.text = element_blank(),  
+      axis.ticks = element_blank()  
+    ) +
+    coord_cartesian(xlim = c(0.5, 5.5), ylim = c(0.5, 1.5))  # Fixed xlim for a consistent width, so you can stack this and compare to other plots
+  
+  # Print the plot
+  print(p)
+}
+
+```
+
+Example Usage
+
+```{r}
+library(ggplot2)     
+library(ggimage)     
+library(patchwork)    
+
+
+# Example usage:
+# Assuming meninges_WT6_tcell is your dataframe and "tcell.png" is the image
+meninges_WT6_tcell_plot <- plot_icons(meninges_WT6_tcell, "tcell.png")
+
+meninges_3xTg9_tcell_plot <- plot_icons(meninges_3xTg9_tcell, "tcell.png")
+
+meninges_WT18_tcell_plot <- plot_icons(meninges_WT18_tcell, "tcell.png")
+
+# Add titles/labels for each plot to specify the group
+meninges_WT6_tcell_plot <- meninges_WT6_tcell_plot + ggtitle("WT6 Group")
+meninges_3xTg9_tcell_plot <- meninges_3xTg9_tcell_plot + ggtitle("3xTg9 Group")
+meninges_WT18_tcell_plot <- meninges_WT18_tcell_plot + ggtitle("WT18 Group")
+
+# Stack the plots vertically with patchwork
+combined_meninges_tcell_plot <- (meninges_WT6_tcell_plot / meninges_3xTg9_tcell_plot / meninges_WT18_tcell_plot)
+
+print(combined_meninges_tcell_plot)
+
+#This plot shows the amount of t cells in the meninges, scaled by size of the T cell image, over the course of a day. The left side is the beginning of the day, and the right is the end of the day. This allows me to compare the amount of T cells throughout the day between adult mice, alzheimer's model mice, and aged mice, to see when they may be most disrupted in the models
+```
+
+Another example, for brain CD8 T cells
+
+```{r}
+library(ggplot2)     
+library(ggimage)     
+library(patchwork)    
+
+# Example usage:
+# Assuming brain_WT6_cd8tcell, brain_3xTg9_cd8tcell, brain_WT18_cd8tcell are your dataframes and "cd8tcell.png" is the image
+brain_WT6_cd8tcell_plot <- plot_icons(brain_WT6_cd8tcell, "cd8tcell.png")
+brain_3xTg9_cd8tcell_plot <- plot_icons(brain_3xTg9_cd8tcell, "cd8tcell.png")
+brain_WT18_cd8tcell_plot <- plot_icons(brain_WT18_cd8tcell, "cd8tcell.png")
+
+# Add titles/labels for each plot to specify the group
+brain_WT6_cd8tcell_plot <- brain_WT6_cd8tcell_plot + ggtitle("WT6 Group")
+brain_3xTg9_cd8tcell_plot <- brain_3xTg9_cd8tcell_plot + ggtitle("3xTg9 Group")
+brain_WT18_cd8tcell_plot <- brain_WT18_cd8tcell_plot + ggtitle("WT18 Group")
+
+# Stack the plots vertically with patchwork
+combined_brain_cd8tcell_plot <- (brain_WT6_cd8tcell_plot / brain_3xTg9_cd8tcell_plot / brain_WT18_cd8tcell_plot)
+
+# Print the final combined plot
+print(combined_brain_cd8tcell_plot)
+#This does the same, but for brain CD8+ T cells
+```
+
+This github has image files and all data needed to do this for all of the different cell types as needed
